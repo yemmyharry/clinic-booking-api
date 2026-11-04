@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: clinic-booking-api
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: API_KEY
+        generateValue: true
+      - key: DATABASE_PATH
+        value: ./clinic.db
