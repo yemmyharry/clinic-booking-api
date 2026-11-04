@@ -2,14 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import request from 'supertest';
 import { createApp } from '../src/app.js';
-import { getDatabase } from '../src/db/index.js';
+import { getPool, initSchema } from '../src/db/index.js';
 
 const API_KEY = 'valid-test-key-level3';
 process.env.API_KEY = API_KEY;
-process.env.DATABASE_PATH = ':memory:';
 
 test('Level 3: Concurrency and Cancellation', async (t) => {
-  const db = getDatabase(':memory:');
+  const pool = getPool();
+  await initSchema(pool);
   const app = createApp();
 
   const slot = {

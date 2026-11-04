@@ -2,7 +2,7 @@
 
 A production-ready Clinic Appointment Booking API and web interface implementing all 5 levels of the [Koya Cohort 4 Assessment Specification](https://koyaacademy.com/assessment-api).
 
-Built with **Node.js**, **TypeScript**, **Express**, and **SQLite** (with WAL mode and atomic constraint guarantees).
+Built with **Node.js**, **TypeScript**, **Express**, and **PostgreSQL** (with connection pooling and atomic partial unique constraints).
 
 ---
 
@@ -23,7 +23,7 @@ Built with **Node.js**, **TypeScript**, **Express**, and **SQLite** (with WAL mo
   - Trims whitespace from `name` and `email`, and normalizes `email` to lowercase.
 
 - **Level 3 (Concurrency & Cancellations):**
-  - **Zero Double-Bookings Guarantee:** Guaranteed at the database engine level via SQLite atomic partial unique index (`WHERE status = 'confirmed'`). Concurrent requests arriving at the exact same millisecond cannot book the same slot; exactly one succeeds (`201`) and concurrent attempts return `409 {"error": "Slot already booked"}`.
+  - **Zero Double-Bookings Guarantee:** Guaranteed at the PostgreSQL engine level via atomic partial unique index (`WHERE status = 'confirmed'`). Concurrent requests arriving at the exact same millisecond cannot book the same slot; exactly one succeeds (`201`) and concurrent attempts return `409 {"error": "Slot already booked"}` (PostgreSQL error `23505`).
   - `DELETE /bookings/:id`: Cancels booking, transitions status to `cancelled`, and frees the slot.
   - Returns `409 {"error": "Already cancelled"}` if already cancelled.
   - Returns `404` if booking ID does not exist.
@@ -51,6 +51,7 @@ Built with **Node.js**, **TypeScript**, **Express**, and **SQLite** (with WAL mo
 ### 1. Prerequisites
 - Node.js 18+ (tested up to Node 26)
 - npm
+- PostgreSQL database (Neon, Supabase, Render, or local). *Note: if `DATABASE_URL` is omitted, the app automatically falls back to an in-memory PostgreSQL emulator for zero-setup local dev and testing.*
 
 ### 2. Installation
 ```bash
@@ -68,8 +69,9 @@ Default configuration:
 ```env
 PORT=3000
 API_KEY=koya-secret-key-123
-DATABASE_PATH=./clinic.db
+DATABASE_URL=postgresql://user:password@localhost:5432/clinic_booking
 ```
+*(Leave `DATABASE_URL` blank if you want to run with the zero-config in-memory PostgreSQL engine during development).*
 
 ### 4. Run Development Server
 ```bash
@@ -165,21 +167,20 @@ GET /bookings?email=ada@example.com&limit=10&cursor=<next_cursor>
 
 ## 🚢 Deployment
 
-### Deploying to Render (Recommended - Free)
+### Free PostgreSQL Options:
+- [Neon](https://neon.tech): Free serverless Postgres with instant setup. Copy your connection string into `DATABASE_URL`.
+- [Supabase](https://supabase.com): Free hosted Postgres.
+- [Render Postgres](https://render.com): Free managed Postgres instance.
+
+### Deploying to Render
 1. Push this repository to GitHub.
 2. Sign in to [Render](https://render.com).
-3. Click **New +** -> **Web Service** -> Connect your GitHub repository.
-4. Set:
+3. If using [render.yaml](render.yaml), deploy via **Blueprints** to automatically provision both the Web Service and PostgreSQL database.
+4. Or manually create a **Web Service**:
    - **Environment:** `Node`
    - **Build Command:** `npm install && npm run build`
    - **Start Command:** `npm start`
-5. Under **Environment Variables**, set:
-   - `API_KEY`: `<your-chosen-api-key>`
-   - `DATABASE_PATH`: `./clinic.db`
-6. Click **Create Web Service**. Your API and Web UI will be live at an `https://<app-name>.onrender.com` URL.
-
-### Deploying via Docker
-```bash
-docker build -t clinic-booking-api .
-docker run -p 3000:3000 -e API_KEY="your-secret-key" clinic-booking-api
-```
+   - **Environment Variables:**
+     - `API_KEY`: `<your-chosen-api-key>`
+     - `DATABASE_URL`: `<your-postgres-connection-string>`
+5. Click **Deploy**. Your API and Web UI will be live at an `https://<app-name>.onrender.com` URL.

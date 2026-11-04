@@ -2,14 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import request from 'supertest';
 import { createApp } from '../src/app.js';
-import { getDatabase } from '../src/db/index.js';
+import { getPool, initSchema } from '../src/db/index.js';
 
 const API_KEY = 'valid-test-key-level4';
 process.env.API_KEY = API_KEY;
-process.env.DATABASE_PATH = ':memory:';
 
 test('Level 4: Idempotency and Pagination', async (t) => {
-  const db = getDatabase(':memory:');
+  const pool = getPool();
+  await initSchema(pool);
   const app = createApp();
 
   await t.test('Idempotency tests', async (sub) => {

@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
-import { getDatabase } from '../db/index.js';
+import { getPool } from '../db/index.js';
 
 const router = Router();
 
@@ -14,12 +14,11 @@ interface BookingRecord {
 }
 
 // POST /bookings (Levels 1–5)
-router.post('/bookings', (req: Request, res: Response) => {
-  const db = getDatabase();
+router.post('/bookings', async (req: Request, res: Response) => {
+  const pool = getPool();
   const rawEmail = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
 
   // Level 4: Idempotency check
-  // Identical replay returns the exact cached response without side effects
   const idempotencyKey = req.header('Idempotency-Key');
   const canonicalBody = JSON.stringify({
     slot_id: req.body?.slot_id,
@@ -28,11 +27,13 @@ router.post('/bookings', (req: Request, res: Response) => {
   });
 
   if (idempotencyKey) {
-    const cached = db
-      .prepare('SELECT status_code, response_body, request_hash FROM idempotency_keys WHERE key = ?')
-      .get(idempotencyKey) as { status_code: number; response_body: string; request_hash: string } | undefined;
+    const cachedRes = await pool.query(
+      'SELECT status_code, response_body, request_hash FROM idempotency_keys WHERE key = $1',
+      [idempotencyKey]
+    );
 
-    if (cached) {
+    if (cachedRes.rows.length > 0) {
+      const cached = cachedRes.rows[0];
       if (cached.request_hash === canonicalBody) {
         res.status(cached.status_code).json(JSON.parse(cached.response_body));
         return;
@@ -48,15 +49,16 @@ router.post('/bookings', (req: Request, res: Response) => {
     const now = Date.now();
     const windowStart = now - 60000;
 
-    // Prune entries older than 5 minutes to keep table clean
-    db.prepare('DELETE FROM rate_limits WHERE timestamp < ?').run(now - 300000);
+    // Prune old entries
+    await pool.query('DELETE FROM rate_limits WHERE timestamp < $1', [now - 300000]);
 
-    const attempts = db
-      .prepare('SELECT timestamp FROM rate_limits WHERE email = ? AND timestamp > ? ORDER BY timestamp ASC')
-      .all(rawEmail, windowStart) as { timestamp: number }[];
+    const attemptsRes = await pool.query(
+      'SELECT timestamp FROM rate_limits WHERE email = $1 AND timestamp > $2 ORDER BY timestamp ASC',
+      [rawEmail, windowStart]
+    );
 
-    if (attempts.length >= 5) {
-      const oldestInWindow = attempts[0].timestamp;
+    if (attemptsRes.rows.length >= 5) {
+      const oldestInWindow = Number(attemptsRes.rows[0].timestamp);
       const waitMs = oldestInWindow + 60000 - now;
       const retryAfterSeconds = Math.max(1, Math.ceil(waitMs / 1000));
 
@@ -66,7 +68,7 @@ router.post('/bookings', (req: Request, res: Response) => {
     }
 
     // Record this attempt immediately (failed attempts included)
-    db.prepare('INSERT INTO rate_limits (email, timestamp) VALUES (?, ?)').run(rawEmail, now);
+    await pool.query('INSERT INTO rate_limits (email, timestamp) VALUES ($1, $2)', [rawEmail, now]);
   }
 
   // Level 2: Field presence and validation
@@ -94,14 +96,17 @@ router.post('/bookings', (req: Request, res: Response) => {
   }
 
   // Check slot exists
-  const slot = db.prepare('SELECT id, provider, start, end FROM slots WHERE id = ?').get(trimmedSlotId) as
-    | { id: string; provider: string; start: string; end: string }
-    | undefined;
+  const slotRes = await pool.query(
+    'SELECT id, provider, start, slot_end FROM slots WHERE id = $1',
+    [trimmedSlotId]
+  );
 
-  if (!slot) {
+  if (slotRes.rows.length === 0) {
     res.status(404).json({ error: 'Slot not found' });
     return;
   }
+
+  const slot = slotRes.rows[0];
 
   // Check if slot has already started
   const slotStartTime = new Date(slot.start).getTime();
@@ -111,11 +116,12 @@ router.post('/bookings', (req: Request, res: Response) => {
   }
 
   // Level 3: Check if already booked with confirmed status
-  const existingConfirmed = db
-    .prepare("SELECT id FROM bookings WHERE slot_id = ? AND status = 'confirmed'")
-    .get(trimmedSlotId);
+  const existingConfirmedRes = await pool.query(
+    "SELECT id FROM bookings WHERE slot_id = $1 AND status = 'confirmed'",
+    [trimmedSlotId]
+  );
 
-  if (existingConfirmed) {
+  if (existingConfirmedRes.rows.length > 0) {
     res.status(409).json({ error: 'Slot already booked' });
     return;
   }
@@ -133,34 +139,37 @@ router.post('/bookings', (req: Request, res: Response) => {
     created_at: createdAt,
   };
 
+  const client = await pool.connect();
   try {
-    const bookTransaction = db.transaction(() => {
-      db.prepare(`
-        INSERT INTO bookings (id, slot_id, name, email, status, created_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `).run(bookingId, trimmedSlotId, trimmedName, trimmedEmail, 'confirmed', createdAt);
+    await client.query('BEGIN');
+    await client.query(
+      'INSERT INTO bookings (id, slot_id, name, email, status, created_at) VALUES ($1, $2, $3, $4, $5, $6)',
+      [bookingId, trimmedSlotId, trimmedName, trimmedEmail, 'confirmed', createdAt]
+    );
 
-      if (idempotencyKey) {
-        db.prepare(`
-          INSERT INTO idempotency_keys (key, request_hash, status_code, response_body, created_at)
-          VALUES (?, ?, ?, ?, ?)
-        `).run(idempotencyKey, canonicalBody, 201, JSON.stringify(newBooking), Date.now());
-      }
-    });
+    if (idempotencyKey) {
+      await client.query(
+        'INSERT INTO idempotency_keys (key, request_hash, status_code, response_body, created_at) VALUES ($1, $2, $3, $4, $5)',
+        [idempotencyKey, canonicalBody, 201, JSON.stringify(newBooking), Date.now()]
+      );
+    }
 
-    bookTransaction();
+    await client.query('COMMIT');
     res.status(201).json(newBooking);
   } catch (err: any) {
-    if (err.message && err.message.includes('UNIQUE constraint failed')) {
+    await client.query('ROLLBACK');
+    if (err.code === '23505' || (err.message && (err.message.includes('unique constraint') || err.message.includes('UNIQUE constraint')))) {
       res.status(409).json({ error: 'Slot already booked' });
       return;
     }
     res.status(500).json({ error: 'Internal server error while creating booking' });
+  } finally {
+    client.release();
   }
 });
 
 // GET /bookings (Level 4 · List a person's bookings)
-router.get('/bookings', (req: Request, res: Response) => {
+router.get('/bookings', async (req: Request, res: Response) => {
   const { email, limit, cursor } = req.query;
 
   if (typeof email !== 'string' || !email.trim()) {
@@ -185,7 +194,7 @@ router.get('/bookings', (req: Request, res: Response) => {
     pageLimit = parsedLimit;
   }
 
-  const db = getDatabase();
+  const pool = getPool();
 
   let query: string;
   let params: any[];
@@ -202,12 +211,12 @@ router.get('/bookings', (req: Request, res: Response) => {
       query = `
         SELECT id, slot_id, name, email, status, created_at
         FROM bookings
-        WHERE LOWER(email) = LOWER(?)
-          AND (created_at > ? OR (created_at = ? AND id > ?))
+        WHERE LOWER(email) = LOWER($1)
+          AND (created_at > $2 OR (created_at = $2 AND id > $3))
         ORDER BY created_at ASC, id ASC
-        LIMIT ?
+        LIMIT $4
       `;
-      params = [normalizedEmail, cursorCreatedAt, cursorCreatedAt, cursorId, pageLimit + 1];
+      params = [normalizedEmail, cursorCreatedAt, cursorId, pageLimit + 1];
     } catch {
       res.status(400).json({ error: 'Invalid cursor' });
       return;
@@ -216,73 +225,90 @@ router.get('/bookings', (req: Request, res: Response) => {
     query = `
       SELECT id, slot_id, name, email, status, created_at
       FROM bookings
-      WHERE LOWER(email) = LOWER(?)
+      WHERE LOWER(email) = LOWER($1)
       ORDER BY created_at ASC, id ASC
-      LIMIT ?
+      LIMIT $2
     `;
     params = [normalizedEmail, pageLimit + 1];
   }
 
-  const rows = db.prepare(query).all(...params) as BookingRecord[];
+  try {
+    const result = await pool.query(query, params);
+    const rows = result.rows as BookingRecord[];
 
-  let next_cursor: string | null = null;
-  let bookings: BookingRecord[];
+    let next_cursor: string | null = null;
+    let bookings: BookingRecord[];
 
-  if (rows.length > pageLimit) {
-    bookings = rows.slice(0, pageLimit);
-    const lastItem = bookings[bookings.length - 1];
-    next_cursor = Buffer.from(`${lastItem.created_at}|${lastItem.id}`).toString('base64');
-  } else {
-    bookings = rows;
-    next_cursor = null;
+    if (rows.length > pageLimit) {
+      bookings = rows.slice(0, pageLimit);
+      const lastItem = bookings[bookings.length - 1];
+      next_cursor = Buffer.from(`${lastItem.created_at}|${lastItem.id}`).toString('base64');
+    } else {
+      bookings = rows;
+      next_cursor = null;
+    }
+
+    res.status(200).json({
+      bookings,
+      next_cursor,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to retrieve bookings' });
   }
-
-  res.status(200).json({
-    bookings,
-    next_cursor,
-  });
 });
 
 // GET /bookings/:id (Level 1 · Get a booking)
-router.get('/bookings/:id', (req: Request, res: Response) => {
+router.get('/bookings/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
-  const db = getDatabase();
+  const pool = getPool();
 
-  const booking = db
-    .prepare('SELECT id, slot_id, name, email, status, created_at FROM bookings WHERE id = ?')
-    .get(id) as BookingRecord | undefined;
+  try {
+    const result = await pool.query(
+      'SELECT id, slot_id, name, email, status, created_at FROM bookings WHERE id = $1',
+      [id]
+    );
 
-  if (!booking) {
-    res.status(404).json({ error: 'Booking not found' });
-    return;
+    if (result.rows.length === 0) {
+      res.status(404).json({ error: 'Booking not found' });
+      return;
+    }
+
+    res.status(200).json(result.rows[0]);
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to retrieve booking' });
   }
-
-  res.status(200).json(booking);
 });
 
 // DELETE /bookings/:id (Level 3 · Cancel a booking)
-router.delete('/bookings/:id', (req: Request, res: Response) => {
+router.delete('/bookings/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
-  const db = getDatabase();
+  const pool = getPool();
 
-  const booking = db
-    .prepare('SELECT id, slot_id, name, email, status, created_at FROM bookings WHERE id = ?')
-    .get(id) as BookingRecord | undefined;
+  try {
+    const result = await pool.query(
+      'SELECT id, slot_id, name, email, status, created_at FROM bookings WHERE id = $1',
+      [id]
+    );
 
-  if (!booking) {
-    res.status(404).json({ error: 'Booking not found' });
-    return;
+    if (result.rows.length === 0) {
+      res.status(404).json({ error: 'Booking not found' });
+      return;
+    }
+
+    const booking = result.rows[0];
+
+    if (booking.status === 'cancelled') {
+      res.status(409).json({ error: 'Already cancelled' });
+      return;
+    }
+
+    await pool.query("UPDATE bookings SET status = 'cancelled' WHERE id = $1", [id]);
+
+    booking.status = 'cancelled';
+    res.status(200).json(booking);
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to cancel booking' });
   }
-
-  if (booking.status === 'cancelled') {
-    res.status(409).json({ error: 'Already cancelled' });
-    return;
-  }
-
-  db.prepare("UPDATE bookings SET status = 'cancelled' WHERE id = ?").run(id);
-
-  booking.status = 'cancelled';
-  res.status(200).json(booking);
 });
 
 export default router;

@@ -1,36 +1,51 @@
-import Database from 'better-sqlite3';
-import path from 'path';
+import pg from 'pg';
+import { newDb } from 'pg-mem';
 
-let dbInstance: Database.Database | null = null;
+const { Pool } = pg;
 
-export function getDatabase(dbPath?: string): Database.Database {
-  if (dbInstance && !dbPath) {
-    return dbInstance;
+export type DbPool = pg.Pool;
+
+let poolInstance: DbPool | null = null;
+
+export function getPool(connectionString?: string, forceMemory = false): DbPool {
+  if (poolInstance && !connectionString && !forceMemory) {
+    return poolInstance;
   }
 
-  const resolvedPath = dbPath || process.env.DATABASE_PATH || path.resolve(process.cwd(), 'clinic.db');
-  const db = new Database(resolvedPath);
+  const conn = connectionString || process.env.DATABASE_URL;
 
-  // Enable WAL mode for better concurrency and foreign keys
-  db.pragma('journal_mode = WAL');
-  db.pragma('foreign_keys = ON');
-
-  initSchema(db);
-
-  if (!dbPath) {
-    dbInstance = db;
+  if (conn && !forceMemory) {
+    const isLocal = conn.includes('localhost') || conn.includes('127.0.0.1');
+    const pool = new Pool({
+      connectionString: conn,
+      ssl: isLocal ? false : { rejectUnauthorized: false },
+      max: 20,
+    });
+    if (!connectionString) {
+      poolInstance = pool;
+    }
+    return pool;
   }
 
-  return db;
+  // Use in-memory Postgres emulator (pg-mem) for tests or zero-config dev
+  const memDb = newDb();
+  const pgAdapter = memDb.adapters.createPg();
+  const memPool = new pgAdapter.Pool() as unknown as DbPool;
+
+  if (!connectionString) {
+    poolInstance = memPool;
+  }
+
+  return memPool;
 }
 
-export function initSchema(db: Database.Database) {
-  db.exec(`
+export async function initSchema(pool: DbPool): Promise<void> {
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS slots (
       id TEXT PRIMARY KEY,
       provider TEXT NOT NULL,
       start TEXT NOT NULL,
-      end TEXT NOT NULL
+      slot_end TEXT NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS bookings (
@@ -42,33 +57,31 @@ export function initSchema(db: Database.Database) {
       created_at TEXT NOT NULL
     );
 
-    -- Ensure a slot can have at most ONE confirmed booking at any time
     CREATE UNIQUE INDEX IF NOT EXISTS idx_confirmed_slot ON bookings(slot_id) WHERE status = 'confirmed';
 
-    -- Index for email lookup and pagination
-    CREATE INDEX IF NOT EXISTS idx_bookings_email_created ON bookings(email, created_at, id);
+    CREATE INDEX IF NOT EXISTS idx_bookings_email ON bookings(email, created_at, id);
 
     CREATE TABLE IF NOT EXISTS idempotency_keys (
       key TEXT PRIMARY KEY,
       request_hash TEXT NOT NULL,
       status_code INTEGER NOT NULL,
       response_body TEXT NOT NULL,
-      created_at INTEGER NOT NULL
+      created_at BIGINT NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS rate_limits (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       email TEXT NOT NULL,
-      timestamp INTEGER NOT NULL
+      timestamp BIGINT NOT NULL
     );
 
     CREATE INDEX IF NOT EXISTS idx_rate_limits_email_ts ON rate_limits(email, timestamp);
   `);
 }
 
-export function closeDatabase() {
-  if (dbInstance) {
-    dbInstance.close();
-    dbInstance = null;
+export async function closePool(): Promise<void> {
+  if (poolInstance) {
+    await poolInstance.end();
+    poolInstance = null;
   }
 }
