@@ -3,132 +3,351 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>HealthHub Clinic - Appointment Booking</title>
-  <link rel="stylesheet" href="style.css" />
+  <title>Aura Health Clinic · Patient Appointment Booking</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <div class="app-container">
-    <header class="header">
+  <!-- Toast Notification Container -->
+  <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+
+  <!-- Top Navigation Bar -->
+  <header class="navbar">
+    <div class="nav-container">
       <div class="brand">
-        <div class="logo-icon">🩺</div>
-        <div>
-          <h1>HealthHub Clinic</h1>
-          <p class="subtitle">Online Patient Appointment Scheduling</p>
+        <div class="brand-logo">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/>
+            <path d="M12 5v6"/>
+            <path d="M9 8h6"/>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <span class="brand-title">Aura Health</span>
+          <span class="brand-badge">Clinic Portal</span>
         </div>
       </div>
-      <div class="header-actions">
-        <div class="api-key-box">
-          <label for="apiKeyInput">X-API-Key:</label>
-          <input type="password" id="apiKeyInput" value="koya-secret-key-123" placeholder="Enter API Key" />
-          <button id="toggleKeyVisibility" class="btn-icon" title="Toggle visibility">👁️</button>
-        </div>
-      </div>
-    </header>
 
-    <div class="tabs">
-      <button class="tab-btn active" id="tabSlotsBtn">Available Slots</button>
-      <button class="tab-btn" id="tabBookingsBtn">My Bookings</button>
-    </div>
-
-    <!-- Alert Banner -->
-    <div id="alertBanner" class="alert hidden"></div>
-
-    <!-- Confirmation Banner -->
-    <div id="confirmationBanner" class="confirmation-card hidden">
-      <div class="conf-header">
-        <div class="conf-badge">✅ Booking Confirmed</div>
-        <button id="closeConfBtn" class="close-btn">&times;</button>
-      </div>
-      <div class="conf-details">
-        <p><strong>Booking ID:</strong> <code id="confBookingId"></code> <button id="copyIdBtn" class="btn-copy">Copy</button></p>
-        <p><strong>Patient Name:</strong> <span id="confName"></span></p>
-        <p><strong>Email:</strong> <span id="confEmail"></span></p>
-        <p><strong>Slot ID:</strong> <span id="confSlotId"></span></p>
-        <p><strong>Status:</strong> <span class="status-pill confirmed">confirmed</span></p>
-        <p><strong>Created:</strong> <span id="confCreated"></span></p>
-      </div>
-      <div class="conf-actions">
-        <button id="cancelBookingFromConfBtn" class="btn btn-danger-outline">Cancel This Booking</button>
-      </div>
-    </div>
-
-    <!-- TAB 1: Slots View -->
-    <main id="slotsSection" class="tab-content active">
-      <div class="toolbar">
-        <div class="filter-group">
-          <label for="providerFilter">Filter by Doctor:</label>
-          <select id="providerFilter">
-            <option value="">All Providers</option>
-          </select>
-        </div>
-        <button id="refreshSlotsBtn" class="btn btn-secondary">🔄 Refresh Slots</button>
+      <div class="nav-center">
+        <nav class="nav-tabs">
+          <button class="nav-tab active" id="tabSlotsBtn">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+              <line x1="16" y1="2" x2="16" y2="6"/>
+              <line x1="8" y1="2" x2="8" y2="6"/>
+              <line x1="3" y1="10" x2="21" y2="10"/>
+            </svg>
+            <span>Book Appointment</span>
+          </button>
+          <button class="nav-tab" id="tabBookingsBtn">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+              <circle cx="9" cy="7" r="4"/>
+              <path d="M22 21v-2a4 4 0 0 0-3-3.87"/>
+              <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+            </svg>
+            <span>My Appointments</span>
+          </button>
+        </nav>
       </div>
 
-      <div id="slotsGrid" class="slots-grid">
-        <div class="loading">Loading appointment slots...</div>
-      </div>
-    </main>
-
-    <!-- TAB 2: My Bookings View -->
-    <section id="bookingsSection" class="tab-content hidden">
-      <div class="lookup-card">
-        <h3>Look Up Your Bookings</h3>
-        <p>Enter your registered email address to see your appointments.</p>
-        <form id="lookupForm" class="lookup-form">
-          <input type="email" id="lookupEmail" placeholder="patient@example.com" required />
-          <button type="submit" class="btn btn-primary">Search Bookings</button>
-        </form>
-      </div>
-
-      <div id="userBookingsList" class="bookings-list">
-        <div class="empty-state">Enter an email address above to view bookings.</div>
-      </div>
-
-      <div id="paginationControls" class="pagination-controls hidden">
-        <button id="loadMoreBtn" class="btn btn-secondary">Load More</button>
-      </div>
-    </section>
-
-    <!-- Booking Modal -->
-    <div id="bookingModal" class="modal hidden">
-      <div class="modal-backdrop"></div>
-      <div class="modal-dialog">
-        <div class="modal-header">
-          <h3>Book Appointment</h3>
-          <button id="closeModalBtn" class="close-btn">&times;</button>
-        </div>
-        <form id="bookingForm">
-          <div class="slot-summary" id="modalSlotSummary">
-            <!-- Filled by JS -->
-          </div>
-
-          <input type="hidden" id="modalSlotId" />
-
-          <div class="form-group">
-            <label for="patientName">Full Name *</label>
-            <input type="text" id="patientName" placeholder="e.g. Ada Obi" required />
-          </div>
-
-          <div class="form-group">
-            <label for="patientEmail">Email Address *</label>
-            <input type="email" id="patientEmail" placeholder="e.g. ada@example.com" required />
-          </div>
-
-          <div class="modal-actions">
-            <button type="button" id="cancelModalBtn" class="btn btn-secondary">Cancel</button>
-            <button type="submit" id="submitBookingBtn" class="btn btn-primary">Confirm Booking</button>
-          </div>
-        </form>
+      <div class="nav-right">
+        <button id="openKeyModalBtn" class="key-pill" title="Configure API Key">
+          <span class="status-dot"></span>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>
+          </svg>
+          <span class="key-label">API Key</span>
+        </button>
       </div>
     </div>
+  </header>
 
-    <footer class="footer">
-      <p>HealthHub Clinic Booking API · Koya Cohort 4 Assessment Implementation</p>
-    </footer>
+  <!-- Hero Section -->
+  <section class="hero-section">
+    <div class="hero-content">
+      <div class="hero-pill">
+        <span class="sparkle">✦</span> Verified Healthcare Providers · Instant Slot Booking
+      </div>
+      <h1 class="hero-heading">Schedule care with trusted specialists.</h1>
+      <p class="hero-subtext">Choose an available time slot below, enter your details, and receive immediate appointment confirmation.</p>
+
+      <!-- Quick Metrics Bar -->
+      <div class="metrics-bar">
+        <div class="metric-item">
+          <span class="metric-value" id="metricAvailable">--</span>
+          <span class="metric-label">Slots Available</span>
+        </div>
+        <div class="metric-divider"></div>
+        <div class="metric-item">
+          <span class="metric-value" id="metricProviders">--</span>
+          <span class="metric-label">Care Providers</span>
+        </div>
+        <div class="metric-divider"></div>
+        <div class="metric-item">
+          <span class="metric-value" id="metricTotal">--</span>
+          <span class="metric-label">Total Time Slots</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Confirmation Banner Card (Dynamic) -->
+  <div class="container">
+    <div id="confirmationBanner" class="confirmation-banner hidden">
+      <div class="conf-top">
+        <div class="conf-title-row">
+          <div class="conf-icon-circle">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M20 6 9 17l-5-5"/>
+            </svg>
+          </div>
+          <div>
+            <h3 class="conf-title">Appointment Confirmed</h3>
+            <p class="conf-subtitle">Your appointment has been secured in the clinic calendar.</p>
+          </div>
+        </div>
+        <button id="closeConfBtn" class="icon-btn-subtle" title="Dismiss">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+
+      <div class="conf-grid">
+        <div class="conf-field">
+          <span class="field-label">Booking Reference</span>
+          <div class="code-copy-group">
+            <code id="confBookingId" class="booking-code"></code>
+            <button id="copyIdBtn" class="copy-pill-btn" title="Copy to clipboard">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+              </svg>
+              <span>Copy</span>
+            </button>
+          </div>
+        </div>
+        <div class="conf-field">
+          <span class="field-label">Patient Name</span>
+          <span id="confName" class="field-value"></span>
+        </div>
+        <div class="conf-field">
+          <span class="field-label">Contact Email</span>
+          <span id="confEmail" class="field-value"></span>
+        </div>
+        <div class="conf-field">
+          <span class="field-label">Slot ID</span>
+          <span id="confSlotId" class="field-value font-mono"></span>
+        </div>
+      </div>
+
+      <div class="conf-footer">
+        <span class="badge-status-confirmed">Status: Confirmed</span>
+        <button id="cancelBookingFromConfBtn" class="btn-danger-outline">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="15" y1="9" x2="9" y2="15"/>
+            <line x1="9" y1="9" x2="15" y2="15"/>
+          </svg>
+          Cancel Appointment
+        </button>
+      </div>
+    </div>
   </div>
+
+  <!-- MAIN TAB 1: Slots Grid -->
+  <main class="container" id="slotsSection">
+    <div class="filter-card">
+      <div class="filter-header">
+        <div class="filter-header-left">
+          <h2 class="section-title">Available Appointments</h2>
+          <p class="section-desc">Select a doctor to filter or browse all open clinic slots.</p>
+        </div>
+        <button id="refreshSlotsBtn" class="btn-refresh" title="Reload slots">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="23 4 23 10 17 10"/>
+            <polyline points="1 20 1 14 7 14"/>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+          </svg>
+          <span>Refresh</span>
+        </button>
+      </div>
+
+      <!-- Provider Filter Chips -->
+      <div class="chips-scroller" id="providerChipsContainer">
+        <button class="chip active" data-provider="">All Doctors</button>
+      </div>
+    </div>
+
+    <!-- Slots Grid -->
+    <div id="slotsGrid" class="slots-grid">
+      <div class="loading-state">
+        <div class="spinner"></div>
+        <p>Loading clinic schedule...</p>
+      </div>
+    </div>
+  </main>
+
+  <!-- MAIN TAB 2: Patient Bookings Lookup -->
+  <section class="container hidden" id="bookingsSection">
+    <div class="lookup-panel">
+      <div class="lookup-panel-header">
+        <div class="lookup-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+            <polyline points="22,6 12,13 2,6"/>
+          </svg>
+        </div>
+        <div>
+          <h2 class="section-title">Lookup Your Bookings</h2>
+          <p class="section-desc">Enter your email address to view, manage, or cancel your clinic reservations.</p>
+        </div>
+      </div>
+
+      <form id="lookupForm" class="lookup-form">
+        <div class="input-wrapper">
+          <svg class="input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+            <polyline points="22,6 12,13 2,6"/>
+          </svg>
+          <input type="email" id="lookupEmail" placeholder="patient@example.com" required autocomplete="email" />
+        </div>
+        <button type="submit" class="btn-primary" id="searchBookingsBtn">
+          <span>Find Appointments</span>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"/>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+        </button>
+      </form>
+    </div>
+
+    <!-- Bookings List Output -->
+    <div id="userBookingsList" class="bookings-list">
+      <div class="empty-placeholder">
+        <div class="empty-icon">📋</div>
+        <h3>No Appointments Loaded</h3>
+        <p>Enter your patient email above to view past and upcoming visits.</p>
+      </div>
+    </div>
+
+    <!-- Pagination Controls -->
+    <div id="paginationControls" class="pagination-footer hidden">
+      <button id="loadMoreBtn" class="btn-load-more">
+        <span>Load More Appointments</span>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="6 9 12 15 18 9"/>
+        </svg>
+      </button>
+    </div>
+  </section>
+
+  <!-- Booking Modal -->
+  <div id="bookingModal" class="modal-layer hidden">
+    <div class="modal-backdrop"></div>
+    <div class="modal-window">
+      <div class="modal-header">
+        <div>
+          <span class="modal-tag">Confirm Visit</span>
+          <h3 class="modal-title">Book Appointment</h3>
+        </div>
+        <button id="closeModalBtn" class="modal-close" title="Close">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Slot Detail Card in Modal -->
+      <div class="modal-slot-card" id="modalSlotSummary">
+        <!-- Populated via JS -->
+      </div>
+
+      <form id="bookingForm" class="modal-form">
+        <input type="hidden" id="modalSlotId" />
+
+        <div class="form-field">
+          <label for="patientName">Patient Full Name <span class="req">*</span></label>
+          <input type="text" id="patientName" placeholder="Ada Obi" required />
+        </div>
+
+        <div class="form-field">
+          <label for="patientEmail">Email Address <span class="req">*</span></label>
+          <input type="email" id="patientEmail" placeholder="ada@example.com" required />
+          <span class="field-hint">Confirmation & reminders will be sent here.</span>
+        </div>
+
+        <div class="modal-actions">
+          <button type="button" id="cancelModalBtn" class="btn-cancel">Cancel</button>
+          <button type="submit" id="submitBookingBtn" class="btn-submit">
+            <span>Confirm Booking</span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="9 18 15 12 9 6"/>
+            </svg>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- API Key Modal Settings -->
+  <div id="keyModal" class="modal-layer hidden">
+    <div class="modal-backdrop" id="closeKeyModalBackdrop"></div>
+    <div class="modal-window key-modal-window">
+      <div class="modal-header">
+        <div>
+          <span class="modal-tag">Authentication</span>
+          <h3 class="modal-title">API Key Settings</h3>
+        </div>
+        <button id="closeKeyModalBtn" class="modal-close" title="Close">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+
+      <p class="modal-description">All client requests send this token via the <code>X-API-Key</code> HTTP header.</p>
+
+      <div class="form-field">
+        <label for="apiKeyInput">X-API-Key Header Value</label>
+        <div class="key-input-row">
+          <input type="password" id="apiKeyInput" value="koya-secret-key-123" placeholder="Enter key..." />
+          <button type="button" id="toggleKeyVisibility" class="btn-key-toggle" title="Show/Hide">
+            👁️
+          </button>
+        </div>
+      </div>
+
+      <div class="key-status-box">
+        <span class="status-indicator-green"></span>
+        <span>Key stored securely in browser session.</span>
+      </div>
+
+      <div class="modal-actions">
+        <button type="button" id="saveKeyBtn" class="btn-submit full-width">Save & Apply Key</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-left">
+        <strong>Aura Health Clinic API</strong> · Production Assessment Service
+      </div>
+      <div class="footer-right">
+        <span>Levels 1–5 Compliant</span>
+        <span class="footer-bullet">•</span>
+        <span>PostgreSQL</span>
+      </div>
+    </div>
+  </footer>
 
   <script src="app.js"></script>
 </body>
