@@ -691,6 +691,10 @@ document.addEventListener('DOMContentLoaded', () => {
           await readResponse(res);
 
           showToast(`Appointment #${id} cancelled.`, 'info');
+          if (activeConfirmationBookingId === id) {
+            confirmationBanner.classList.add('hidden');
+            activeConfirmationBookingId = null;
+          }
           if (currentLookupEmail) {
             nextCursor = null;
             await fetchUserBookings(false);
