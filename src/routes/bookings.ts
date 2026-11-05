@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
-import crypto from 'crypto';
-import { getPool } from '../db/index.js';
+import crypto from 'node:crypto';
+import { getPool, withTransaction } from '../db/index.js';
 
 const router = Router();
 
@@ -13,159 +13,108 @@ interface BookingRecord {
   created_at: string;
 }
 
-// POST /bookings (Levels 1–5)
+interface ApiResult {
+  status: number;
+  body: BookingRecord | { error: string };
+  headers?: Record<string, string>;
+}
+
+// Ignore JSON property order, but compare the complete original payload.
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return '[' + value.map(canonicalJson).join(',') + ']';
+  if (value !== null && typeof value === 'object') {
+    const object = value as Record<string, unknown>;
+    return '{' + Object.keys(object).sort().map(key => JSON.stringify(key) + ':' + canonicalJson(object[key])).join(',') + '}';
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
 router.post('/bookings', async (req: Request, res: Response) => {
-  const pool = getPool();
-  const rawEmail = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
-
-  // Level 4: Idempotency check
   const idempotencyKey = req.header('Idempotency-Key');
-  const canonicalBody = JSON.stringify({
-    slot_id: req.body?.slot_id,
-    name: req.body?.name,
-    email: req.body?.email,
-  });
+  const requestHash = crypto.createHash('sha256').update(canonicalJson(req.body ?? null)).digest('hex');
 
-  if (idempotencyKey) {
-    const cachedRes = await pool.query(
-      'SELECT status_code, response_body, request_hash FROM idempotency_keys WHERE key = $1',
-      [idempotencyKey]
-    );
-
-    if (cachedRes.rows.length > 0) {
-      const cached = cachedRes.rows[0];
-      if (cached.request_hash === canonicalBody) {
-        res.status(cached.status_code).json(JSON.parse(cached.response_body));
-        return;
-      } else {
-        res.status(422).json({ error: 'Idempotency-Key reused with a different body' });
-        return;
+  const result = await withTransaction<ApiResult>(async client => {
+    let mismatchedKey = false;
+    if (idempotencyKey) {
+      const cached = await client.query(
+        'SELECT status_code, response_body, response_headers, request_hash FROM idempotency_keys WHERE key = $1',
+        [idempotencyKey]
+      );
+      if (cached.rows.length) {
+        const row = cached.rows[0];
+        if (row.request_hash !== requestHash) {
+          mismatchedKey = true;
+        } else {
+          return { status: row.status_code, body: JSON.parse(row.response_body), headers: JSON.parse(row.response_headers) };
+        }
       }
     }
-  }
 
-  // Level 5: Rate Limiting (per email, 5 attempts per minute, failed attempts included)
-  if (rawEmail) {
-    const now = Date.now();
-    const windowStart = now - 60000;
+    const finish = async (response: ApiResult): Promise<ApiResult> => {
+      if (idempotencyKey && !mismatchedKey) {
+        await client.query(
+          'INSERT INTO idempotency_keys (key, request_hash, status_code, response_body, response_headers, created_at) VALUES ($1, $2, $3, $4, $5, $6)',
+          [idempotencyKey, requestHash, response.status, JSON.stringify(response.body), JSON.stringify(response.headers ?? {}), Date.now()]
+        );
+      }
+      return response;
+    };
 
-    // Prune old entries
-    await pool.query('DELETE FROM rate_limits WHERE timestamp < $1', [now - 300000]);
+    const { slot_id, name, email } = req.body ?? {};
+    const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
 
-    const attemptsRes = await pool.query(
-      'SELECT timestamp FROM rate_limits WHERE email = $1 AND timestamp > $2 ORDER BY timestamp ASC',
-      [rawEmail, windowStart]
-    );
-
-    if (attemptsRes.rows.length >= 5) {
-      const oldestInWindow = Number(attemptsRes.rows[0].timestamp);
-      const waitMs = oldestInWindow + 60000 - now;
-      const retryAfterSeconds = Math.max(1, Math.ceil(waitMs / 1000));
-
-      res.setHeader('Retry-After', retryAfterSeconds.toString());
-      res.status(429).json({ error: 'Too many attempts for this email' });
-      return;
-    }
-
-    // Record this attempt immediately (failed attempts included)
-    await pool.query('INSERT INTO rate_limits (email, timestamp) VALUES ($1, $2)', [rawEmail, now]);
-  }
-
-  // Level 2: Field presence and validation
-  const { slot_id, name, email } = req.body || {};
-
-  if (slot_id === undefined || slot_id === null || name === undefined || name === null || email === undefined || email === null) {
-    res.status(400).json({ error: 'Missing required fields: slot_id, name, and email' });
-    return;
-  }
-
-  const trimmedSlotId = String(slot_id).trim();
-  const trimmedName = String(name).trim();
-  const trimmedEmail = String(email).trim().toLowerCase();
-
-  if (!trimmedSlotId || !trimmedName || !trimmedEmail) {
-    res.status(400).json({ error: 'slot_id, name, and email cannot be empty' });
-    return;
-  }
-
-  // Email format validation
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  if (!emailRegex.test(trimmedEmail)) {
-    res.status(400).json({ error: 'Invalid email address' });
-    return;
-  }
-
-  // Check slot exists
-  const slotRes = await pool.query(
-    'SELECT id, provider, start, slot_end FROM slots WHERE id = $1',
-    [trimmedSlotId]
-  );
-
-  if (slotRes.rows.length === 0) {
-    res.status(404).json({ error: 'Slot not found' });
-    return;
-  }
-
-  const slot = slotRes.rows[0];
-
-  // Check if slot has already started
-  const slotStartTime = new Date(slot.start).getTime();
-  if (slotStartTime <= Date.now()) {
-    res.status(400).json({ error: 'The slot has already started' });
-    return;
-  }
-
-  // Level 3: Check if already booked with confirmed status
-  const existingConfirmedRes = await pool.query(
-    "SELECT id FROM bookings WHERE slot_id = $1 AND status = 'confirmed'",
-    [trimmedSlotId]
-  );
-
-  if (existingConfirmedRes.rows.length > 0) {
-    res.status(409).json({ error: 'Slot already booked' });
-    return;
-  }
-
-  // Create booking
-  const bookingId = 'b_' + crypto.randomUUID().replace(/-/g, '').slice(0, 16);
-  const createdAt = new Date().toISOString();
-
-  const newBooking: BookingRecord = {
-    id: bookingId,
-    slot_id: trimmedSlotId,
-    name: trimmedName,
-    email: trimmedEmail,
-    status: 'confirmed',
-    created_at: createdAt,
-  };
-
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    await client.query(
-      'INSERT INTO bookings (id, slot_id, name, email, status, created_at) VALUES ($1, $2, $3, $4, $5, $6)',
-      [bookingId, trimmedSlotId, trimmedName, trimmedEmail, 'confirmed', createdAt]
-    );
-
-    if (idempotencyKey) {
-      await client.query(
-        'INSERT INTO idempotency_keys (key, request_hash, status_code, response_body, created_at) VALUES ($1, $2, $3, $4, $5)',
-        [idempotencyKey, canonicalBody, 201, JSON.stringify(newBooking), Date.now()]
+    // The check and increment run in the same database transaction as booking.
+    // Concurrent requests, including requests to different API replicas, wait.
+    if (normalizedEmail) {
+      const now = Date.now();
+      await client.query('DELETE FROM rate_limits WHERE timestamp <= $1', [now - 60000]);
+      const attempts = await client.query(
+        'SELECT timestamp FROM rate_limits WHERE email = $1 AND timestamp > $2 ORDER BY timestamp ASC',
+        [normalizedEmail, now - 60000]
       );
+      if (attempts.rows.length >= 5) {
+        const retryAfter = Math.max(1, Math.ceil((Number(attempts.rows[0].timestamp) + 60000 - now) / 1000));
+        return finish({ status: 429, body: { error: 'Too many attempts for this email' }, headers: { 'Retry-After': String(retryAfter) } });
+      }
+      await client.query('INSERT INTO rate_limits (email, timestamp) VALUES ($1, $2)', [normalizedEmail, now]);
     }
 
-    await client.query('COMMIT');
-    res.status(201).json(newBooking);
-  } catch (err: any) {
-    await client.query('ROLLBACK');
-    if (err.code === '23505' || (err.message && (err.message.includes('unique constraint') || err.message.includes('UNIQUE constraint')))) {
-      res.status(409).json({ error: 'Slot already booked' });
-      return;
+    if (mismatchedKey) {
+      return { status: 422, body: { error: 'Idempotency-Key reused with a different body' } };
     }
-    res.status(500).json({ error: 'Internal server error while creating booking' });
-  } finally {
-    client.release();
-  }
+
+    if ([slot_id, name, email].some(value => typeof value !== 'string' || !value.trim())) {
+      return finish({ status: 400, body: { error: 'slot_id, name, and email must be non-empty strings' } });
+    }
+    const slotId = (slot_id as string).trim();
+    const patientName = (name as string).trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      return finish({ status: 400, body: { error: 'Invalid email address' } });
+    }
+
+    const slots = await client.query('SELECT start FROM slots WHERE id = $1', [slotId]);
+    if (!slots.rows.length) return finish({ status: 404, body: { error: 'Slot not found' } });
+    if (new Date(slots.rows[0].start).getTime() <= Date.now()) {
+      return finish({ status: 400, body: { error: 'The slot has already started' } });
+    }
+
+    const booking: BookingRecord = {
+      id: 'b_' + crypto.randomUUID().replace(/-/g, ''),
+      slot_id: slotId,
+      name: patientName,
+      email: normalizedEmail,
+      status: 'confirmed',
+      created_at: new Date().toISOString(),
+    };
+    const inserted = await client.query(
+      'INSERT INTO bookings (id, slot_id, name, email, status, created_at) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING RETURNING id',
+      [booking.id, booking.slot_id, booking.name, booking.email, booking.status, booking.created_at]
+    );
+    if (!inserted.rows.length) return finish({ status: 409, body: { error: 'Slot already booked' } });
+    return finish({ status: 201, body: booking });
+  });
+
+  res.set(result.headers ?? {}).status(result.status).json(result.body);
 });
 
 // GET /bookings (Level 4 · List a person's bookings)
@@ -181,7 +130,7 @@ router.get('/bookings', async (req: Request, res: Response) => {
 
   let pageLimit = 10;
   if (limit !== undefined) {
-    const limitStr = String(limit);
+    const limitStr = typeof limit === 'string' ? limit : '';
     if (!/^\d+$/.test(limitStr)) {
       res.status(400).json({ error: 'Invalid limit: must be an integer between 1 and 50' });
       return;
@@ -199,11 +148,12 @@ router.get('/bookings', async (req: Request, res: Response) => {
   let query: string;
   let params: any[];
 
-  if (cursor && typeof cursor === 'string') {
+  if (cursor !== undefined) {
     try {
+      if (typeof cursor !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(cursor)) throw new Error('Invalid cursor');
       const decoded = Buffer.from(cursor, 'base64').toString('utf8');
       const [cursorCreatedAt, cursorId] = decoded.split('|');
-      if (!cursorCreatedAt || !cursorId) {
+      if (decoded.split('|').length !== 2 || !cursorCreatedAt || !cursorId || !Number.isFinite(Date.parse(cursorCreatedAt))) {
         res.status(400).json({ error: 'Invalid cursor' });
         return;
       }
@@ -282,33 +232,21 @@ router.get('/bookings/:id', async (req: Request, res: Response) => {
 // DELETE /bookings/:id (Level 3 · Cancel a booking)
 router.delete('/bookings/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
-  const pool = getPool();
-
-  try {
-    const result = await pool.query(
+  const result = await withTransaction<ApiResult>(async client => {
+    const found = await client.query(
       'SELECT id, slot_id, name, email, status, created_at FROM bookings WHERE id = $1',
       [id]
     );
-
-    if (result.rows.length === 0) {
-      res.status(404).json({ error: 'Booking not found' });
-      return;
-    }
-
-    const booking = result.rows[0];
-
+    if (!found.rows.length) return { status: 404, body: { error: 'Booking not found' } };
+    const booking = found.rows[0] as BookingRecord;
     if (booking.status === 'cancelled') {
-      res.status(409).json({ error: 'Already cancelled' });
-      return;
+      return { status: 409, body: { error: 'Already cancelled' } };
     }
-
-    await pool.query("UPDATE bookings SET status = 'cancelled' WHERE id = $1", [id]);
-
+    await client.query("UPDATE bookings SET status = 'cancelled' WHERE id = $1", [id]);
     booking.status = 'cancelled';
-    res.status(200).json(booking);
-  } catch (err: any) {
-    res.status(500).json({ error: 'Failed to cancel booking' });
-  }
+    return { status: 200, body: booking };
+  });
+  res.status(result.status).json(result.body);
 });
 
 export default router;

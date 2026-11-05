@@ -3,3 +3,8 @@ dist
 clinic.db*
 .git
 .env
+.env.*
+!.env.example
+.local
+artifacts
+coverage

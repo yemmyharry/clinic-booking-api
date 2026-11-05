@@ -60,6 +60,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let currentLookupEmail = '';
   let nextCursor = null;
   let activeConfirmationBookingId = null;
+  let pendingBooking = null;
 
   // Restore API key
   const savedKey = localStorage.getItem('clinic_api_key');
@@ -175,7 +176,7 @@ document.addEventListener('DOMContentLoaded', () => {
       </div>
     `;
 
-    const url = selectedProvider ? `/slots?provider=${encodeURIComponent(selectedProvider)}` : '/slots';
+    const url = '/slots';
 
     try {
       const res = await fetch(url, {
@@ -192,7 +193,7 @@ document.addEventListener('DOMContentLoaded', () => {
       slotsData = data.slots || [];
       renderMetrics(slotsData);
       renderProviderChips(slotsData);
-      renderSlots(slotsData);
+      renderSlots(selectedProvider ? slotsData.filter(slot => slot.provider === selectedProvider) : slotsData);
     } catch (err) {
       slotsGrid.innerHTML = `
         <div class="empty-placeholder">
@@ -275,10 +276,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const initials = getInitials(slot.provider);
 
         return `
-        <div class="slot-card ${!isAvailable ? 'booked-card' : ''}" data-slot-id="${slot.id}">
+        <div class="slot-card ${!isAvailable ? 'booked-card' : ''}" data-slot-id="${escapeHtml(slot.id)}">
           <div class="slot-card-top">
             <div class="doctor-identity">
-              <div class="doctor-avatar">${initials}</div>
+              <div class="doctor-avatar">${escapeHtml(initials)}</div>
               <div>
                 <div class="doctor-name">${escapeHtml(slot.provider)}</div>
                 <div class="doctor-role">General Physician · Consultation</div>
@@ -302,7 +303,7 @@ document.addEventListener('DOMContentLoaded', () => {
           ${
             isAvailable
               ? `
-            <button class="btn-book-slot" data-slot-id="${slot.id}">
+            <button class="btn-book-slot" data-slot-id="${escapeHtml(slot.id)}">
               <span>Book Appointment</span>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
                 <polyline points="9 18 15 12 9 6"/>
@@ -355,6 +356,7 @@ document.addEventListener('DOMContentLoaded', () => {
   function closeBookingModal() {
     bookingModal.classList.add('hidden');
     bookingForm.reset();
+    pendingBooking = null;
   }
 
   closeModalBtn.addEventListener('click', closeBookingModal);
@@ -366,6 +368,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const slot_id = modalSlotId.value;
     const name = patientNameInput.value.trim();
     const email = patientEmailInput.value.trim();
+    const payload = JSON.stringify({ slot_id, name, email });
+    if (pendingBooking?.payload !== payload) {
+      pendingBooking = { payload, key: crypto.randomUUID() };
+    }
 
     submitBookingBtn.disabled = true;
     submitBookingBtn.innerHTML = `
@@ -379,12 +385,16 @@ document.addEventListener('DOMContentLoaded', () => {
         headers: {
           'Content-Type': 'application/json',
           'X-API-Key': getApiKey(),
+          'Idempotency-Key': pendingBooking.key,
         },
-        body: JSON.stringify({ slot_id, name, email }),
+        body: payload,
       });
 
       const data = await res.json();
       if (!res.ok) {
+        // A definite API rejection can be a fresh attempt after correction or
+        // Retry-After. A lost response retains the key to recover its outcome.
+        pendingBooking = null;
         throw new Error(data.error || 'Failed to book appointment');
       }
 
@@ -562,6 +572,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     userBookingsList.querySelectorAll('.cancel-item-btn').forEach((btn) => {
+      if (btn.dataset.bound) return;
+      btn.dataset.bound = 'true';
       btn.addEventListener('click', async () => {
         const id = btn.getAttribute('data-id');
         if (!confirm('Are you sure you want to cancel this appointment?')) return;
@@ -577,6 +589,7 @@ document.addEventListener('DOMContentLoaded', () => {
           if (!res.ok) throw new Error(data.error || 'Failed to cancel');
 
           showToast(`Appointment #${id} cancelled.`, 'info');
+          nextCursor = null;
           fetchUserBookings(false);
           loadSlots();
         } catch (err) {
@@ -591,7 +604,7 @@ document.addEventListener('DOMContentLoaded', () => {
   function escapeHtml(str) {
     const div = document.createElement('div');
     div.textContent = str;
-    return div.innerHTML;
+    return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
   // Initial fetch

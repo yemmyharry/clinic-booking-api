@@ -1,7 +1,12 @@
-node_modules
-dist
+node_modules/
+dist/
+coverage/
+.local/
+artifacts/
+.env
+.env.*
+!.env.example
 clinic.db
 clinic.db-wal
 clinic.db-shm
 .DS_Store
-.env

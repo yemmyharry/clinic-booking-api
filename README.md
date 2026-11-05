@@ -1,186 +1,94 @@
-# Clinic Booking API & Web Interface
+# Clinic Booking API
 
-A production-ready Clinic Appointment Booking API and web interface implementing all 5 levels of the [Koya Cohort 4 Assessment Specification](https://koyaacademy.com/assessment-api).
+A clinic appointment API and web page built with TypeScript, Express, and PostgreSQL for the [Koya assessment](https://koyaacademy.com/assessment-api).
 
-Built with **Node.js**, **TypeScript**, **Express**, and **PostgreSQL** (with connection pooling and atomic partial unique constraints).
+[Deploy this repository to Render](https://render.com/deploy?repo=https://github.com/yemmyharry/clinic-booking-api) to create the web service and database together.
 
----
+The web page lists appointments, filters by doctor, creates bookings, shows confirmation references, cancels bookings, and pages through bookings by email. API routes implement levels 1–5 of the assessment contract.
 
-## 🌟 Features by Level
+## Run locally
 
-- **Level 1 (Core Booking):**
-  - `POST /reset`: Clears bookings, idempotency logs, and replaces all slots (including past slots).
-  - `GET /slots`: Lists all slots ordered by earliest `start` first. Supports filtering by `provider` exact match. Calculates slot availability (`available: false` while confirmed booking exists).
-  - `POST /bookings`: Books a slot, generating unique booking reference and status `confirmed`.
-  - `GET /bookings/:id`: Looks up booking by ID (returns `404` if not found).
+Requires Node.js 22+ and npm. PostgreSQL is required for persistent storage and for production.
 
-- **Level 2 (Security & Input Validation):**
-  - Requires `X-API-Key` header on every API request. Missing or invalid keys return `401 {"error": "..."}`.
-  - Returns `400` if `slot_id`, `name`, or `email` is missing or empty.
-  - Returns `400` if email format is invalid.
-  - Returns `404` if the slot does not exist.
-  - Returns `400` if the slot has already started (`start <= now`).
-  - Trims whitespace from `name` and `email`, and normalizes `email` to lowercase.
-
-- **Level 3 (Concurrency & Cancellations):**
-  - **Zero Double-Bookings Guarantee:** Guaranteed at the PostgreSQL engine level via atomic partial unique index (`WHERE status = 'confirmed'`). Concurrent requests arriving at the exact same millisecond cannot book the same slot; exactly one succeeds (`201`) and concurrent attempts return `409 {"error": "Slot already booked"}` (PostgreSQL error `23505`).
-  - `DELETE /bookings/:id`: Cancels booking, transitions status to `cancelled`, and frees the slot.
-  - Returns `409 {"error": "Already cancelled"}` if already cancelled.
-  - Returns `404` if booking ID does not exist.
-
-- **Level 4 (Idempotency & Pagination):**
-  - Supports optional `Idempotency-Key` header on `POST /bookings`.
-  - Same key with identical body replays the exact same response and booking ID without creating duplicate bookings.
-  - Same key with different payload returns `422 {"error": "Idempotency-Key reused with a different body"}`.
-  - `GET /bookings`: Retrieves a patient's bookings ordered oldest first (`ORDER BY created_at ASC, id ASC`). Case-insensitive email query.
-  - Cursor pagination with `limit` (1–50, defaults to 10; invalid limits return `400`) and opaque `cursor` / `next_cursor` tokens (`null` on final page).
-
-- **Level 5 (Rate Limiting & Spam Prevention):**
-  - At most **5 attempts per email per minute**, failed attempts included.
-  - The 6th attempt returns `429 {"error": "Too many attempts for this email"}` with a `Retry-After: <seconds>` header in whole seconds.
-  - Other emails are unaffected.
-
-- **Interactive Web Page:**
-  - Modern web application served directly from `/`.
-  - Live doctor filter, availability badges, booking modal, confirmation card with copyable booking ID, one-click cancellation, and "My Bookings" lookup with pagination.
-
----
-
-## 🚀 Quick Start
-
-### 1. Prerequisites
-- Node.js 18+ (tested up to Node 26)
-- npm
-- PostgreSQL database (Neon, Supabase, Render, or local). *Note: if `DATABASE_URL` is omitted, the app automatically falls back to an in-memory PostgreSQL emulator for zero-setup local dev and testing.*
-
-### 2. Installation
-```bash
-git clone <repo-url>
-cd clinic-booking-api
-npm install
-```
-
-### 3. Environment Variables
-Copy `.env.example` to `.env`:
-```bash
+```sh
+npm ci
 cp .env.example .env
-```
-Default configuration:
-```env
-PORT=3000
-API_KEY=koya-secret-key-123
-DATABASE_URL=postgresql://user:password@localhost:5432/clinic_booking
-```
-*(Leave `DATABASE_URL` blank if you want to run with the zero-config in-memory PostgreSQL engine during development).*
-
-### 4. Run Development Server
-```bash
-npm run dev
-```
-Visit `http://localhost:3000` to open the web interface.
-
-### 5. Build & Production Start
-```bash
+# Edit .env with your PostgreSQL connection string and API key.
 npm run build
 npm start
 ```
 
----
+Open <http://localhost:3000>. Enter the same API key in the page's **API Key** settings. The key is saved in this browser's local storage. A fresh database has no appointments; seed future demo appointments explicitly:
 
-## 🧪 Testing
+```sh
+npm run seed:demo -- --reset
+```
 
-The repository includes comprehensive automated tests covering all 5 levels and edge cases:
+**Seeding replaces all slots and deletes every booking.** It never runs automatically. Do not seed or reset a submitted deployment except when the assessment evaluator calls `/reset`.
 
-```bash
+For temporary development only, leave `DATABASE_URL` empty to use an in-memory emulator. It loses all state when the process stops. Production refuses to start without `DATABASE_URL` and `API_KEY`.
+
+## Configuration
+
+| Variable | Purpose |
+| --- | --- |
+| `PORT` | HTTP port, default `3000` |
+| `API_KEY` | Required `X-API-Key` value; required in production |
+| `DATABASE_URL` | PostgreSQL connection string; required in production |
+| `DATABASE_SSL` | Use `require` for Render private TLS with a self-signed certificate; `false` disables TLS for a trusted private network |
+| `API_BASE_URL` | Optional base URL for the demo seed script; default `http://localhost:3000` |
+| `TEST_DATABASE_URL` | PostgreSQL administrator connection used to create a disposable test database |
+
+Keep `.env` and database passwords out of Git. Production requests use a chosen private key; the example development key is not a production secret. Static files and the database-aware `/health` endpoint are public. Every assessment API endpoint requires authentication, including malformed requests. CORS preflight requests are handled separately so browser clients can send the required headers.
+
+## API contract
+
+All API requests use `X-API-Key: <your-key>`. Bodies and responses are JSON; errors use `{ "error": "message" }`.
+
+| Endpoint | Behavior |
+| --- | --- |
+| `POST /reset` | `{ "slots": [{ "id", "provider", "start", "end" }] }`; atomically replaces slots and clears bookings, retry records, and rate limits; accepts past slots |
+| `GET /slots` | Every slot, chronologically sorted; optional exact `provider` filter; `available` is false while a confirmed booking exists |
+| `POST /bookings` | `{ "slot_id", "name", "email" }`; returns `201` and a confirmed booking |
+| `GET /bookings/:id` | Returns the booking or `404` |
+| `DELETE /bookings/:id` | Returns the cancelled booking and frees its slot; `404` if unknown; `409` if already cancelled |
+| `GET /bookings?email=...&limit=10&cursor=...` | Case-insensitive email lookup, oldest first; limit 1–50; use `next_cursor` for the next page, ending at `null` |
+
+Booking validation returns `400` for missing, empty, non-string, or invalid fields and for slots that have started; nonexistent slots return `404`. Names and emails are trimmed, and emails are stored in lowercase. An already booked slot returns `409`.
+
+With `Idempotency-Key`, identical payloads replay the same status and response, including failures. Different payloads with the same key return `422`. JSON object property order does not matter; values and additional fields do matter. A completed retry is the same logical attempt and does not consume another rate-limit allowance. The browser retains the key when retrying the same form after a network error.
+
+A normalized email gets at most five fresh booking attempts in a rolling minute, including invalid or unsuccessful attempts. Further attempts return `429` with an integer `Retry-After` header. Other emails are unaffected.
+
+## Concurrency and persistence
+
+A PostgreSQL partial unique index permits only one confirmed booking per slot. Short mutation transactions also acquire a database advisory lock so idempotency records, rate-limit checks, bookings, cancellations, and resets remain consistent across independent API processes. Booking and retry response commit together. Validation failures commit their attempt records and retry responses as well.
+
+This deliberately serializes writes for a small clinic. Read requests remain concurrent. Higher-volume deployments can replace the single transaction lock with carefully ordered resource locks; removing the lock without replacing its guarantees reintroduces races. The in-memory emulator uses a development-only queue and rollback backup; production uses PostgreSQL transactions and locks.
+
+## Verification
+
+```sh
 npm test
+npm run build
+TEST_DATABASE_URL=postgresql://user:password@localhost:5432/postgres npm run test:postgres
 ```
 
-### Test Coverage Highlights:
-- `tests/level1.test.ts`: Slot replacement, sorting, filtering by provider, booking creation, retrieval, and 404s.
-- `tests/level2.test.ts`: `X-API-Key` 401 enforcement, missing fields, invalid email, past slots, 404 slots, and trimming/lowercasing.
-- `tests/level3.test.ts`: Concurrent parallel booking race condition tests, 409 conflict checks, cancellation, and slot freeing.
-- `tests/level4.test.ts`: Idempotent retries, 422 mismatch validation, limit boundary validation, and cursor pagination through pages.
-- `tests/level5.test.ts`: 5-attempt sliding window rate limiting (including failed attempts), 429 response with `Retry-After` header, and email isolation.
+The PostgreSQL test runner creates and deletes its own database; it does not reset the database named in `TEST_DATABASE_URL`. The role must be allowed to create databases. Never point tests at a production application database.
 
----
+The current full PostgreSQL run passes **62 tests**, including independent API replicas, simultaneous same-slot booking, retry races, conflicting keys, failed-response replay, parallel spam, cancellation races, equal-timestamp cursor pagination, and process-restart persistence. The normal memory run skips the PostgreSQL integration group. GitHub Actions runs both suites, the build, and a production-only dependency check against PostgreSQL 17.
 
-## 📡 API Reference
+## Deploy
 
-All requests must include the header:
-```http
-X-API-Key: <your-api-key>
+Render's free database expires after 30 days. Upgrade before expiration if assessment review is still pending.
+
+Use the included [Render Blueprint](render.yaml) to provision the web service and its PostgreSQL database together on Render. The API and web page share one HTTPS base URL. Instructions and the submission checklist are in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
+The Docker image builds with `npm ci`, installs only production dependencies in its final stage, and runs as the `node` user. Production does not load the development database emulator.
+
+```sh
+docker build -t clinic-booking-api .
+docker run --rm -p 3000:3000 --env-file .env -e NODE_ENV=production clinic-booking-api
 ```
 
-### 1. Reset Slots & State
-```http
-POST /reset
-Content-Type: application/json
-
-{
-  "slots": [
-    {
-      "id": "s1",
-      "provider": "Dr Ade",
-      "start": "2026-12-10T09:00:00Z",
-      "end": "2026-12-10T09:30:00Z"
-    }
-  ]
-}
-```
-
-### 2. List Slots
-```http
-GET /slots
-GET /slots?provider=Dr%20Ade
-```
-
-### 3. Create Booking
-```http
-POST /bookings
-Content-Type: application/json
-Idempotency-Key: <optional-uuid>
-
-{
-  "slot_id": "s1",
-  "name": "Ada Obi",
-  "email": "ada@example.com"
-}
-```
-
-### 4. Get Booking by ID
-```http
-GET /bookings/{id}
-```
-
-### 5. Cancel Booking
-```http
-DELETE /bookings/{id}
-```
-
-### 6. List Person's Bookings (Paginated)
-```http
-GET /bookings?email=ada@example.com&limit=10
-GET /bookings?email=ada@example.com&limit=10&cursor=<next_cursor>
-```
-
----
-
-## 🚢 Deployment
-
-### Free PostgreSQL Options:
-- [Neon](https://neon.tech): Free serverless Postgres with instant setup. Copy your connection string into `DATABASE_URL`.
-- [Supabase](https://supabase.com): Free hosted Postgres.
-- [Render Postgres](https://render.com): Free managed Postgres instance.
-
-### Deploying to Render
-1. Push this repository to GitHub.
-2. Sign in to [Render](https://render.com).
-3. If using [render.yaml](render.yaml), deploy via **Blueprints** to automatically provision both the Web Service and PostgreSQL database.
-4. Or manually create a **Web Service**:
-   - **Environment:** `Node`
-   - **Build Command:** `npm install && npm run build`
-   - **Start Command:** `npm start`
-   - **Environment Variables:**
-     - `API_KEY`: `<your-chosen-api-key>`
-     - `DATABASE_URL`: `<your-postgres-connection-string>`
-5. Click **Deploy**. Your API and Web UI will be live at an `https://<app-name>.onrender.com` URL.
+Use a database hostname reachable from the container; `localhost` inside Docker refers to the container itself.

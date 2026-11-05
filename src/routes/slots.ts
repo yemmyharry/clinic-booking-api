@@ -45,7 +45,7 @@ router.get('/slots', async (req: Request, res: Response) => {
       start: row.start,
       end: row.slot_end,
       available: Number(row.confirmed_count) === 0,
-    }));
+    })).sort((a, b) => Date.parse(a.start) - Date.parse(b.start));
 
     res.status(200).json({ slots });
   } catch (err: any) {

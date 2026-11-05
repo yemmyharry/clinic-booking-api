@@ -8,8 +8,11 @@
     "build": "tsc && cp -r src/public dist/",
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
-    "test": "tsx --test tests/*.test.ts"
+    "test": "tsx --test tests/*.test.ts",
+    "test:postgres": "node scripts/test-postgres.mjs",
+    "seed:demo": "node scripts/seed-demo.mjs"
   },
+  "engines": { "node": ">=22 <27" },
   "keywords": [
     "clinic",
     "booking",
