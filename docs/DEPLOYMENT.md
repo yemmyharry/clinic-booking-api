@@ -11,7 +11,7 @@ The assessment allows a free host. This project uses one Render web service for 
 3. Render generates `API_KEY`; retrieve it from the service's environment settings and save it securely for the submission form. Private database connections require TLS with Render's self-signed certificate (`DATABASE_SSL=require`).
 4. The Blueprint builds with development dependencies, compiles TypeScript, then removes development dependencies before starting. `/health` checks database connectivity. Automatic deploys are off.
 5. Wait until the service reports healthy. Copy its HTTPS URL; it is both the API base URL and web page URL.
-6. Open the page, enter the generated API key in its settings, and explicitly seed future demo slots once before recording:
+6. Open the page, enter the generated API key using **Connect API** if prompted, and click **Create starter appointments** while the database is empty. This creates future appointments without deleting existing data. For CLI seeding instead:
 
    ```sh
    API_BASE_URL=https://YOUR-SERVICE.onrender.com API_KEY=YOUR_KEY npm run seed:demo -- --reset
@@ -47,3 +47,9 @@ Never run the local test suites against a submitted deployment. `/reset` is part
 Before submitting, confirm the repository is public or give the evaluator `quadri40` access. Tag the exact submitted commit, retain the deployed version, keep the service and database active, and make no further changes until contacted. Do not submit the assessment form automatically.
 
 Official references: [Render CLI](https://render.com/docs/cli), [Render Blueprint fields](https://render.com/docs/blueprint-spec), [Render free-service limits](https://render.com/docs/free).
+
+## Railway deployment
+
+The same Node app/Docker image also runs on Railway. Create a Postgres service in the same project and reference its `DATABASE_URL` in the app service (for example `${{Postgres.DATABASE_URL}}`, using the actual service name). Set `NODE_ENV=production`, `API_KEY`, and `DATABASE_SSL=require`. Review and deploy variable changes, then generate a domain on the app service under Settings → Networking.
+
+After deploying the latest source, open that public URL. An empty database displays **Create starter appointments**. This explicit action is authenticated, transactional, and refuses to modify an existing schedule. No shell access or database editing is needed to prepare the first appointments. Do not create/reset schedules after submitting the assessment unless instructed by the evaluator.
