@@ -7,6 +7,7 @@ import { requireApiKey } from './middleware/auth.js';
 import resetRouter from './routes/reset.js';
 import slotsRouter from './routes/slots.js';
 import bookingsRouter from './routes/bookings.js';
+import setupRouter from './routes/setup.js';
 import { getPool } from './db/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -44,6 +45,7 @@ export function createApp() {
   app.use(resetRouter);
   app.use(slotsRouter);
   app.use(bookingsRouter);
+  app.use(setupRouter);
 
   // 404 handler for unknown routes
   app.use((req: Request, res: Response) => {
