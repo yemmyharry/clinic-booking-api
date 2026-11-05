@@ -61,15 +61,74 @@ document.addEventListener('DOMContentLoaded', () => {
   let nextCursor = null;
   let activeConfirmationBookingId = null;
   let pendingBooking = null;
+  let retryUntil = 0;
+  let retryEmail = '';
+  let retryTimer = null;
+  let slotsRequest = 0;
+  let lookupRequest = 0;
+  const connectionNotice = document.getElementById('connectionNotice');
+  const connectionMessage = document.getElementById('connectionMessage');
+  const connectionLabel = document.getElementById('connectionLabel');
+  const keyFeedback = document.getElementById('keyFeedback');
+  const bookingFeedback = document.getElementById('bookingFeedback');
+  const lookupFeedback = document.getElementById('lookupFeedback');
+  const pageSize = document.getElementById('pageSize');
+  document.getElementById('connectApiBtn').addEventListener('click', () => {
+    keyModal.classList.remove('hidden');
+    apiKeyInput.focus();
+  });
+
+  function connectionState(connected, message) {
+    connectionLabel.textContent = connected ? 'Connected' : 'Connect API';
+    connectionNotice.classList.toggle('connected', connected);
+    connectionMessage.textContent = message;
+    document.getElementById('connectApiBtn').textContent = connected ? 'API settings' : 'Connect API';
+  }
+
+  async function readResponse(response) {
+    let data;
+    try { data = await response.json(); }
+    catch { throw new Error('The appointment service returned an unreadable response. Please try again.'); }
+    if (!response.ok) {
+      const error = new Error(data.error || 'The request failed.');
+      error.status = response.status;
+      error.retryAfter = Number(response.headers.get('Retry-After')) || 60;
+      if (response.status === 401) {
+        connectionState(false, 'Connect using the deployed API key to view and book appointments.');
+      }
+      throw error;
+    }
+    return data;
+  }
+
+  function feedback(element, message, isError = true) {
+    element.textContent = message;
+    element.classList.toggle('error', isError);
+  }
+
+  function updateRetryButton() {
+    const activeUntil = patientEmailInput.value.trim().toLowerCase() === retryEmail ? retryUntil : 0;
+    const seconds = Math.max(0, Math.ceil((activeUntil - Date.now()) / 1000));
+    if (seconds && !retryTimer) retryTimer = setInterval(updateRetryButton, 250);
+    submitBookingBtn.disabled = seconds > 0;
+    submitBookingBtn.textContent = seconds > 0 ? `Try again in ${seconds}s` : 'Confirm Booking';
+    if (!seconds && retryTimer) {
+      clearInterval(retryTimer);
+      retryTimer = null;
+      feedback(bookingFeedback, 'You can try booking again now.', false);
+    }
+  }
 
   // Restore API key
-  const savedKey = localStorage.getItem('clinic_api_key');
+  let savedKey = '';
+  try { savedKey = localStorage.getItem('clinic_api_key') || ''; } catch { /* Browser storage may be disabled. */ }
   if (savedKey) {
     apiKeyInput.value = savedKey;
   }
 
+  let activeApiKey = savedKey || 'koya-secret-key-123';
   function getApiKey() {
-    return apiKeyInput.value.trim() || 'koya-secret-key-123';
+    return activeApiKey;
   }
 
   // Toast notifications
@@ -94,6 +153,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // API Key Modal interactions
   openKeyModalBtn.addEventListener('click', () => {
+    apiKeyInput.value = activeApiKey;
     keyModal.classList.remove('hidden');
   });
 
@@ -108,11 +168,23 @@ document.addEventListener('DOMContentLoaded', () => {
     apiKeyInput.type = apiKeyInput.type === 'password' ? 'text' : 'password';
   });
 
-  saveKeyBtn.addEventListener('click', () => {
-    localStorage.setItem('clinic_api_key', apiKeyInput.value.trim());
-    closeKeyModal();
-    showToast('API Key saved successfully.', 'success');
-    loadSlots();
+  saveKeyBtn.addEventListener('click', async () => {
+    if (!apiKeyInput.value.trim()) {
+      feedback(keyFeedback, 'Enter the API key configured on your deployed service.');
+      return;
+    }
+    saveKeyBtn.disabled = true;
+    feedback(keyFeedback, 'Checking connection…', false);
+    try {
+      await readResponse(await fetch('/slots', { headers: { 'X-API-Key': apiKeyInput.value.trim() } }));
+      activeApiKey = apiKeyInput.value.trim();
+      try { localStorage.setItem('clinic_api_key', apiKeyInput.value.trim()); } catch { /* Continue without persistence. */ }
+      feedback(keyFeedback, 'Connected.', false);
+      closeKeyModal();
+      await loadSlots();
+    } catch (error) {
+      feedback(keyFeedback, error.status === 401 ? 'That key was rejected. Use API_KEY from your deployed service.' : error.message);
+    } finally { saveKeyBtn.disabled = false; }
   });
 
   // Tab switching
@@ -169,6 +241,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Load Slots from API
   async function loadSlots() {
+    const request = ++slotsRequest;
     slotsGrid.innerHTML = `
       <div class="loading-state">
         <div class="spinner"></div>
@@ -185,21 +258,25 @@ document.addEventListener('DOMContentLoaded', () => {
         },
       });
 
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to load schedule');
-      }
+      const data = await readResponse(res);
+      if (request !== slotsRequest) return;
+      connectionState(true, 'Connected to the live appointment service.');
 
       slotsData = data.slots || [];
       renderMetrics(slotsData);
       renderProviderChips(slotsData);
       renderSlots(selectedProvider ? slotsData.filter(slot => slot.provider === selectedProvider) : slotsData);
     } catch (err) {
+      if (request !== slotsRequest) return;
+      slotsData = [];
+      renderMetrics([]);
+      renderProviderChips([]);
+      connectionState(false, err.status === 401 ? 'Enter the deployed API key to view and book appointments.' : 'Unable to connect. Check your connection and try Refresh.');
       slotsGrid.innerHTML = `
         <div class="empty-placeholder">
           <div class="empty-icon">⚠️</div>
           <h3>Unable to Load Appointments</h3>
-          <p>${escapeHtml(err.message)}. Check your API key under settings.</p>
+          <p>${escapeHtml(err.status === 401 ? "Use Connect API above to enter your deployed API key." : err.message)}</p>
         </div>
       `;
       showToast(err.message, 'error');
@@ -227,7 +304,7 @@ document.addEventListener('DOMContentLoaded', () => {
     `;
 
     providers.forEach((prov) => {
-      const count = slots.filter((s) => s.provider === prov && s.available).length;
+      const count = slots.filter((s) => s.provider === prov && s.available && Date.parse(s.start) > Date.now()).length;
       html += `
         <button class="chip ${selectedProvider === prov ? 'active' : ''}" data-provider="${escapeHtml(prov)}">
           ${escapeHtml(prov)} (${count})
@@ -240,7 +317,8 @@ document.addEventListener('DOMContentLoaded', () => {
     providerChipsContainer.querySelectorAll('.chip').forEach((chip) => {
       chip.addEventListener('click', () => {
         selectedProvider = chip.getAttribute('data-provider');
-        loadSlots();
+        renderProviderChips(slotsData);
+        renderSlots(selectedProvider ? slotsData.filter(s => s.provider === selectedProvider) : slotsData);
       });
     });
   }
@@ -250,10 +328,12 @@ document.addEventListener('DOMContentLoaded', () => {
       slotsGrid.innerHTML = `
         <div class="empty-placeholder">
           <div class="empty-icon">🗓️</div>
-          <h3>No Appointments Scheduled</h3>
-          <p>No available slots found for the selected criteria.</p>
+          <h3>${slotsData.length ? 'No matching appointments' : 'Your clinic schedule is empty'}</h3>
+          <p>${slotsData.length ? 'Select All Doctors to see the full schedule.' : 'Create a starter schedule of 12 real, bookable appointments over the next three days. This is only available while the schedule is empty.'}</p>
+          ${!slotsData.length ? '<button id="setupScheduleBtn" type="button" class="btn-primary">Create starter appointments</button><p id="setupFeedback" role="status" aria-live="polite"></p>' : ''}
         </div>
       `;
+      document.getElementById('setupScheduleBtn')?.addEventListener('click', setupSchedule);
       return;
     }
 
@@ -349,6 +429,8 @@ document.addEventListener('DOMContentLoaded', () => {
       </div>
     `;
 
+    feedback(bookingFeedback, '', false);
+    updateRetryButton();
     bookingModal.classList.remove('hidden');
     patientNameInput.focus();
   }
@@ -362,12 +444,23 @@ document.addEventListener('DOMContentLoaded', () => {
   closeModalBtn.addEventListener('click', closeBookingModal);
   cancelModalBtn.addEventListener('click', closeBookingModal);
 
+  patientEmailInput.addEventListener('input', () => {
+    feedback(bookingFeedback, '', false);
+    updateRetryButton();
+  });
+
   // Form submission
   bookingForm.addEventListener('submit', async (e) => {
     e.preventDefault();
+    if ((patientEmailInput.value.trim().toLowerCase() === retryEmail && Date.now() < retryUntil) || submitBookingBtn.disabled) return;
+    feedback(bookingFeedback, '', false);
     const slot_id = modalSlotId.value;
     const name = patientNameInput.value.trim();
     const email = patientEmailInput.value.trim();
+    if (!name || !email) {
+      feedback(bookingFeedback, 'Enter your name and a valid email address.');
+      return;
+    }
     const payload = JSON.stringify({ slot_id, name, email });
     if (pendingBooking?.payload !== payload) {
       pendingBooking = { payload, key: crypto.randomUUID() };
@@ -390,29 +483,28 @@ document.addEventListener('DOMContentLoaded', () => {
         body: payload,
       });
 
-      const data = await res.json();
-      if (!res.ok) {
-        // A definite API rejection can be a fresh attempt after correction or
-        // Retry-After. A lost response retains the key to recover its outcome.
-        pendingBooking = null;
-        throw new Error(data.error || 'Failed to book appointment');
-      }
+      let data;
+      try { data = await readResponse(res); }
+      catch (error) { if (error.status) pendingBooking = null; throw error; }
 
       closeBookingModal();
       showConfirmation(data);
       showToast('Appointment booked successfully!', 'success');
       loadSlots();
     } catch (err) {
-      showToast(err.message, 'error');
-    } finally {
-      submitBookingBtn.disabled = false;
-      submitBookingBtn.innerHTML = `
-        <span>Confirm Booking</span>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polyline points="9 18 15 12 9 6"/>
-        </svg>
-      `;
-    }
+      if (err.status === 429) {
+        retryEmail = email.toLowerCase();
+        retryUntil = Date.now() + err.retryAfter * 1000;
+        if (retryTimer) clearInterval(retryTimer);
+        retryTimer = setInterval(updateRetryButton, 250);
+        feedback(bookingFeedback, 'Too many booking attempts for this email. Wait for the countdown, then try again.');
+      } else if (err.status === 409) {
+        feedback(bookingFeedback, 'Someone has just booked this appointment. Choose another available time.');
+        loadSlots();
+      } else {
+        feedback(bookingFeedback, err.status ? err.message : 'The response was lost. Press Confirm Booking to safely retry the same request.');
+      }
+    } finally { updateRetryButton(); }
   });
 
   function showConfirmation(booking) {
@@ -420,7 +512,8 @@ document.addEventListener('DOMContentLoaded', () => {
     confBookingId.textContent = booking.id;
     confName.textContent = booking.name;
     confEmail.textContent = booking.email;
-    confSlotId.textContent = booking.slot_id;
+    const slot = slotsData.find(s => s.id === booking.slot_id);
+    confSlotId.textContent = slot ? `${slot.provider} · ${formatDateTime(slot.start)} · ${formatTimeOnly(slot.start)}–${formatTimeOnly(slot.end)}` : booking.slot_id;
 
     confirmationBanner.classList.remove('hidden');
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -442,7 +535,7 @@ document.addEventListener('DOMContentLoaded', () => {
           <span>Copy</span>
         `;
       }, 2000);
-    });
+    }).catch(() => showToast('Select and copy the booking reference shown above.', 'info'));
   });
 
   cancelBookingFromConfBtn.addEventListener('click', async () => {
@@ -457,8 +550,7 @@ document.addEventListener('DOMContentLoaded', () => {
         },
       });
 
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to cancel');
+      await readResponse(res);
 
       showToast('Appointment successfully cancelled.', 'info');
       confirmationBanner.classList.add('hidden');
@@ -473,6 +565,8 @@ document.addEventListener('DOMContentLoaded', () => {
     e.preventDefault();
     currentLookupEmail = lookupEmailInput.value.trim();
     nextCursor = null;
+    paginationControls.classList.add('hidden');
+    feedback(lookupFeedback, '', false);
     userBookingsList.innerHTML = `
       <div class="loading-state">
         <div class="spinner"></div>
@@ -491,7 +585,10 @@ document.addEventListener('DOMContentLoaded', () => {
   async function fetchUserBookings(append = false) {
     if (!currentLookupEmail) return;
 
-    let url = `/bookings?email=${encodeURIComponent(currentLookupEmail)}&limit=5`;
+    const request = ++lookupRequest;
+    loadMoreBtn.disabled = true;
+    const cursorBefore = nextCursor;
+    let url = `/bookings?email=${encodeURIComponent(currentLookupEmail)}&limit=${pageSize.value}`;
     if (nextCursor) {
       url += `&cursor=${encodeURIComponent(nextCursor)}`;
     }
@@ -503,8 +600,8 @@ document.addEventListener('DOMContentLoaded', () => {
         },
       });
 
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to retrieve bookings');
+      const data = await readResponse(res);
+      if (request !== lookupRequest) return;
 
       nextCursor = data.next_cursor;
       renderUserBookings(data.bookings || [], append);
@@ -515,6 +612,11 @@ document.addEventListener('DOMContentLoaded', () => {
         paginationControls.classList.add('hidden');
       }
     } catch (err) {
+      if (request !== lookupRequest) return;
+      nextCursor = cursorBefore;
+      feedback(lookupFeedback, err.message);
+      if (append) return;
+      paginationControls.classList.add('hidden');
       userBookingsList.innerHTML = `
         <div class="empty-placeholder">
           <div class="empty-icon">⚠️</div>
@@ -522,7 +624,8 @@ document.addEventListener('DOMContentLoaded', () => {
           <p>${escapeHtml(err.message)}</p>
         </div>
       `;
-      showToast(err.message, 'error');
+    } finally {
+      if (request === lookupRequest) loadMoreBtn.disabled = false;
     }
   }
 
@@ -547,7 +650,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <span class="booking-meta-id">Ref #${escapeHtml(b.id)}</span>
             <div class="booking-patient-info">${escapeHtml(b.name)}</div>
             <div class="booking-time-info">
-              Slot: <code>${escapeHtml(b.slot_id)}</code> · Created: ${formatDateTime(b.created_at)}
+              ${bookingDetails(b)}
             </div>
           </div>
           <div class="booking-actions">
@@ -585,18 +688,73 @@ document.addEventListener('DOMContentLoaded', () => {
               'X-API-Key': getApiKey(),
             },
           });
-          const data = await res.json();
-          if (!res.ok) throw new Error(data.error || 'Failed to cancel');
+          await readResponse(res);
 
           showToast(`Appointment #${id} cancelled.`, 'info');
-          nextCursor = null;
-          fetchUserBookings(false);
-          loadSlots();
+          if (currentLookupEmail) {
+            nextCursor = null;
+            await fetchUserBookings(false);
+          } else {
+            bUpdateCancelled(id);
+          }
+          await loadSlots();
         } catch (err) {
           showToast(err.message, 'error');
         }
       });
     });
+  }
+
+  function bookingDetails(booking) {
+    const slot = slotsData.find(s => s.id === booking.slot_id);
+    return slot ? `${escapeHtml(slot.provider)} · ${formatDateTime(slot.start)} · ${formatTimeOnly(slot.start)}–${formatTimeOnly(slot.end)}` : `Slot: <code>${escapeHtml(booking.slot_id)}</code>`;
+  }
+
+  function bUpdateCancelled(id) {
+    const card = document.getElementById('booking-item-' + id);
+    const badge = card?.querySelector('.status-badge-confirmed');
+    if (badge) { badge.textContent = 'cancelled'; badge.className = 'status-badge-cancelled'; }
+    card?.querySelector('.cancel-item-btn')?.remove();
+  }
+
+  pageSize.addEventListener('change', () => {
+    if (currentLookupEmail) { nextCursor = null; fetchUserBookings(false); }
+  });
+
+  document.getElementById('referenceForm').addEventListener('submit', async event => {
+    event.preventDefault();
+    const request = ++lookupRequest;
+    currentLookupEmail = '';
+    nextCursor = null;
+    paginationControls.classList.add('hidden');
+    feedback(lookupFeedback, 'Looking up booking…', false);
+    const reference = document.getElementById('referenceInput').value.trim();
+    try {
+      const booking = await readResponse(await fetch('/bookings/' + encodeURIComponent(reference), { headers: { 'X-API-Key': getApiKey() } }));
+      if (request !== lookupRequest) return;
+      renderUserBookings([booking], false);
+      feedback(lookupFeedback, 'Booking found.', false);
+    } catch (error) {
+      if (request !== lookupRequest) return;
+      userBookingsList.innerHTML = '';
+      feedback(lookupFeedback, error.status === 404 ? 'No booking matches that reference.' : error.message);
+    }
+  });
+
+  async function setupSchedule() {
+    const button = document.getElementById('setupScheduleBtn');
+    button.disabled = true;
+    const status = document.getElementById('setupFeedback');
+    status.textContent = 'Creating your schedule…';
+    try {
+      await readResponse(await fetch('/setup/demo', { method: 'POST', headers: { 'X-API-Key': getApiKey() } }));
+      await loadSlots();
+      showToast('12 appointments are ready to book.', 'success');
+    } catch (error) {
+      status.textContent = error.message;
+      button.disabled = false;
+      if (error.status === 409) await loadSlots();
+    }
   }
 
   refreshSlotsBtn.addEventListener('click', loadSlots);
