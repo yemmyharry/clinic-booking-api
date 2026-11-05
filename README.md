@@ -18,7 +18,11 @@ npm run build
 npm start
 ```
 
-Open <http://localhost:3000>. Enter the same API key in the page's **API Key** settings. The key is saved in this browser's local storage. A fresh database has no appointments; seed future demo appointments explicitly:
+Open <http://localhost:3000>. Enter the same API key in the page's **API Key** settings. The key is saved in this browser's local storage. A fresh database starts empty. After connecting, click **Create starter appointments** on the page. This calls the authenticated `POST /setup/demo` endpoint to create 12 future appointments. It refuses to modify any non-empty schedule and never resets bookings. You can then book a slot, see its confirmation, find it by reference or email, and cancel it entirely from the page.
+
+The connection banner distinguishes an invalid API key from an empty schedule. A rejected key stays in the settings dialog until corrected. Booking errors appear beside the form; rate-limited emails get a countdown based on `Retry-After`. Browser retries retain their idempotency key if a response is lost.
+
+Alternatively, seed future demo appointments with the CLI:
 
 ```sh
 npm run seed:demo -- --reset
@@ -76,7 +80,15 @@ TEST_DATABASE_URL=postgresql://user:password@localhost:5432/postgres npm run tes
 
 The PostgreSQL test runner creates and deletes its own database; it does not reset the database named in `TEST_DATABASE_URL`. The role must be allowed to create databases. Never point tests at a production application database.
 
-The current full PostgreSQL run passes **62 tests**, including independent API replicas, simultaneous same-slot booking, retry races, conflicting keys, failed-response replay, parallel spam, cancellation races, equal-timestamp cursor pagination, and process-restart persistence. The normal memory run skips the PostgreSQL integration group. GitHub Actions runs both suites, the build, and a production-only dependency check against PostgreSQL 17.
+The current full PostgreSQL run passes **68 tests**, including independent API replicas, simultaneous same-slot booking, retry races, conflicting keys, failed-response replay, parallel spam, cancellation races, equal-timestamp cursor pagination, and process-restart persistence. The normal memory run skips the PostgreSQL integration group. Browser verification uses a separate disposable PostgreSQL database with a non-example API key and starts with no slots:
+
+```sh
+npx playwright install chromium
+TEST_DATABASE_URL=postgresql://user:password@localhost:5432/postgres npm run test:browser
+# On macOS with Chrome already installed, use BROWSER_CHANNEL=chrome.
+```
+
+The browser suite covers fresh setup, authentication, booking, lookup by reference, cancellation, two-page booking races, lost-response retries, per-email 429 feedback, countdown expiry, cursor pagination, and mobile layout. GitHub Actions runs both suites, the build, and a production-only dependency check against PostgreSQL 17.
 
 ## Deploy
 
