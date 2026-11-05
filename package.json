@@ -10,9 +10,12 @@
     "dev": "tsx watch src/index.ts",
     "test": "tsx --test tests/*.test.ts",
     "test:postgres": "node scripts/test-postgres.mjs",
-    "seed:demo": "node scripts/seed-demo.mjs"
+    "seed:demo": "node scripts/seed-demo.mjs",
+    "test:browser": "node tests/browser/booking.mjs"
   },
-  "engines": { "node": ">=22 <27" },
+  "engines": {
+    "node": ">=22 <27"
+  },
   "keywords": [
     "clinic",
     "booking",
@@ -34,6 +37,7 @@
     "@types/pg": "^8.23.1",
     "@types/supertest": "^7.2.1",
     "pg-mem": "^3.0.14",
+    "playwright": "^1.64.1",
     "supertest": "^7.3.1",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2"
