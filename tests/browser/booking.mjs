@@ -89,7 +89,15 @@ try {
   assert.equal(await page.locator('#providerChipsContainer .chip').count(), 4);
   await page.getByRole('button', { name: 'All Doctors', exact: true }).click();
   await waitCards(12);
-  await openBooking('  PATIENT@EXAMPLE.COM  ', '  Ada Patient  ');
+  await openBooking('invalid-email', 'Ada Patient');
+  assert.equal(await page.locator('#patientEmail').evaluate(input => input.checkValidity()), false);
+  await page.locator('#submitBookingBtn').click();
+  assert.equal((await api('/bookings?email=patient@example.com')).data.bookings.length, 0);
+  await page.locator('#patientEmail').fill('  PATIENT@EXAMPLE.COM  ');
+  await page.locator('#patientName').fill('   ');
+  await page.locator('#submitBookingBtn').click();
+  await page.waitForFunction(() => document.getElementById('bookingFeedback').textContent.includes('Enter your name'));
+  await page.locator('#patientName').fill('  Ada Patient  ');
   const booking = await confirmBooking();
   assert.equal(booking.name, 'Ada Patient');
   assert.equal(booking.email, 'patient@example.com');
