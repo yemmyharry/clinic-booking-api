@@ -59,7 +59,7 @@
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>
           </svg>
-          <span class="key-label">API Key</span>
+          <span class="key-label" id="connectionLabel">Connect API</span>
         </button>
       </div>
     </div>
@@ -93,6 +93,13 @@
       </div>
     </div>
   </section>
+
+  <div class="container">
+    <section id="connectionNotice" class="connection-notice" role="status" aria-live="polite">
+      <span id="connectionMessage">Connecting to the appointment service…</span>
+      <button id="connectApiBtn" class="btn-primary" type="button">Connect API</button>
+    </section>
+  </div>
 
   <!-- Confirmation Banner Card (Dynamic) -->
   <div class="container">
@@ -140,7 +147,7 @@
           <span id="confEmail" class="field-value"></span>
         </div>
         <div class="conf-field">
-          <span class="field-label">Slot ID</span>
+          <span class="field-label">Appointment</span>
           <span id="confSlotId" class="field-value font-mono"></span>
         </div>
       </div>
@@ -226,6 +233,17 @@
       </form>
     </div>
 
+    <div class="reference-lookup">
+      <form id="referenceForm" class="lookup-form">
+        <label for="referenceInput">Have a booking reference?</label>
+        <input id="referenceInput" class="reference-input" required placeholder="Paste your booking reference" />
+        <button type="submit" class="btn-primary">Find booking</button>
+      </form>
+      <label for="pageSize">Bookings per page</label>
+      <select id="pageSize"><option value="2">2</option><option value="5" selected>5</option><option value="10">10</option></select>
+    </div>
+    <p id="lookupFeedback" class="form-feedback" role="status" aria-live="polite"></p>
+
     <!-- Bookings List Output -->
     <div id="userBookingsList" class="bookings-list">
       <div class="empty-placeholder">
@@ -282,6 +300,7 @@
           <span class="field-hint">Use this email to look up and manage your appointments.</span>
         </div>
 
+        <p id="bookingFeedback" class="form-feedback" role="status" aria-live="polite"></p>
         <div class="modal-actions">
           <button type="button" id="cancelModalBtn" class="btn-cancel">Cancel</button>
           <button type="submit" id="submitBookingBtn" class="btn-submit">
@@ -317,13 +336,14 @@
       <div class="form-field">
         <label for="apiKeyInput">X-API-Key Header Value</label>
         <div class="key-input-row">
-          <input type="password" id="apiKeyInput" value="koya-secret-key-123" placeholder="Enter key..." />
+          <input type="password" id="apiKeyInput" placeholder="Enter your deployed API key" autocomplete="off" />
           <button type="button" id="toggleKeyVisibility" class="btn-key-toggle" title="Show/Hide">
             👁️
           </button>
         </div>
       </div>
 
+      <p id="keyFeedback" class="form-feedback" role="status" aria-live="polite"></p>
       <div class="key-status-box">
         <span class="status-indicator-green"></span>
         <span>Key saved on this browser when you select Save & Apply.</span>
@@ -342,7 +362,7 @@
         <strong>Aura Health Clinic API</strong> · Production Assessment Service
       </div>
       <div class="footer-right">
-        <span>Levels 1–5 Compliant</span>
+        <span>Live appointment booking</span>
         <span class="footer-bullet">•</span>
         <span>PostgreSQL</span>
       </div>
