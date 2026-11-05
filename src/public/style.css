@@ -1333,3 +1333,40 @@ html {
     align-items: flex-start;
   }
 }
+
+.connection-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 20px;
+  padding: 14px 18px;
+  border: 1px solid var(--amber-500);
+  background: var(--amber-50);
+  border-radius: var(--radius-md);
+  font-size: 0.9rem;
+}
+.connection-notice.connected { border-color: var(--emerald-100); background: var(--emerald-50); }
+.form-feedback { min-height: 1.5em; margin: 12px 0; font-size: 0.9rem; color: var(--emerald-700); }
+.form-feedback.error { color: var(--rose-700); }
+.reference-lookup { padding: 20px; margin: 16px 0; background: #fff; border: 1px solid var(--slate-200); border-radius: var(--radius-lg); }
+.reference-lookup .lookup-form { align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+.reference-input { min-width: 0; flex: 1; padding: 12px; border: 1px solid var(--slate-300); border-radius: var(--radius-sm); font: inherit; }
+#pageSize { margin-left: 8px; padding: 6px; border-radius: 6px; }
+#setupScheduleBtn { margin-top: 20px; }
+#setupFeedback { margin-top: 12px; }
+button:disabled { cursor: not-allowed; opacity: 0.65; }
+.modal-window { max-height: calc(100dvh - 40px); overflow-y: auto; }
+@media (max-width: 640px) { .reference-lookup .lookup-form { align-items: stretch; } }
+.time-row { flex-wrap: wrap; }
+.slot-id-tag { max-width: 100%; overflow-wrap: anywhere; }
+.booking-item-card > div { min-width: 0; max-width: 100%; }
+.booking-meta-id, .booking-time-info { overflow-wrap: anywhere; }
+.modal-slot-card span { max-width: 45%; overflow-wrap: anywhere; }
+.toast-container { max-width: calc(100vw - 40px); }
+.toast { overflow-wrap: anywhere; }
+@media (max-width: 640px) {
+  .nav-tab { min-width: 0; flex: 1 1 0; gap: 4px; padding: 9px 6px; font-size: 0.72rem; }
+  .nav-tab svg { flex-shrink: 0; width: 16px; }
+}
