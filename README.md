@@ -1,6 +1,6 @@
 # Clinic Booking API
 
-A clinic appointment API and web page built with TypeScript, Express, and PostgreSQL for the [Koya assessment](https://koyaacademy.com/assessment-api).
+A clinic appointment API and web page built with TypeScript, Express, and PostgreSQL.
 
 ## Features
 
